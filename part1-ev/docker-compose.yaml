@@ -132,7 +132,8 @@ services:
       _AIRFLOW_WWW_USER_CREATE: "true"
       _AIRFLOW_WWW_USER_USERNAME: "admin"
       _AIRFLOW_WWW_USER_PASSWORD: "${AIRFLOW_ADMIN_PASSWORD:-admin}"
-      AIRFLOW_CONN_SPARK_DEFAULT: "spark://spark-master:7077?deploy-mode=client"
+      # JSON 형식: URI 형식은 host 의 spark:// 스킴이 잘려 master 가 'spark-master:7077' 이 됨
+      AIRFLOW_CONN_SPARK_DEFAULT: '{"conn_type": "spark", "host": "spark://spark-master", "port": 7077, "extra": {"deploy-mode": "client", "spark-binary": "spark-submit"}}'
       KAFKA_BOOTSTRAP: "kafka1:9092,kafka2:9092,kafka3:9092"
       AWS_REGION: "ap-northeast-2"
       AWS_DEFAULT_REGION: "ap-northeast-2"

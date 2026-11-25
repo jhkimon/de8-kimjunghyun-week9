@@ -1,0 +1,142 @@
+# 9주차 공용 스택 — EC2(t3.large, Ubuntu 22.04) 한 대에서 실행
+#   Kafka 3 broker(KRaft) + kafka-ui + Spark standalone(master/worker) + Airflow
+# 실행: cd part1-ev && docker compose up -d --build
+# 중지: docker compose stop   (down 은 컨테이너를 지워 Kafka 데이터가 사라짐)
+#
+# AWS 접근은 EC2 IAM Role(de9-ec2-kjh)로만 합니다. 이 파일·.env 어디에도 액세스 키를 두지 않습니다.
+# 컨테이너가 IMDS 로 Role 자격 증명을 받으려면 EC2 메타데이터 hop limit 이 2 여야 합니다.
+
+x-kafka-env: &kafka-env
+  CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+  KAFKA_PROCESS_ROLES: "broker,controller"
+  KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka1:9093,2@kafka2:9093,3@kafka3:9093"
+  KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+  KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+  KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT"
+  KAFKA_LOG_DIRS: "/tmp/kraft-combined-logs"
+  KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "3"
+  KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "3"
+  KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "2"
+  KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"
+  KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"   # 토픽은 partitions/replication-factor 를 명시해 직접 생성
+  KAFKA_NUM_PARTITIONS: "3"
+  KAFKA_HEAP_OPTS: "-Xms384m -Xmx384m"       # broker 당 힙 384MiB (8GiB 안에 전체 스택을 맞추기 위함)
+
+x-kafka-common: &kafka-common
+  image: apache/kafka:3.7.0
+  restart: unless-stopped
+  mem_limit: 768m
+
+x-spark-common: &spark-common
+  image: apache/spark:3.5.3          # Spark 3.5.3 / Java 11 / Python 3.8 (Ubuntu 20.04)
+  restart: unless-stopped
+  environment: &spark-env
+    SPARK_DAEMON_MEMORY: "256m"
+    AWS_REGION: "ap-northeast-2"
+    AWS_DEFAULT_REGION: "ap-northeast-2"
+  volumes:
+    - ./:/opt/work/part1-ev
+    - ../part2-price:/opt/work/part2-price
+    - ../data:/opt/work/data:ro
+
+services:
+  kafka1:
+    <<: *kafka-common
+    container_name: kafka1
+    hostname: kafka1
+    ports:
+      - "29092:29092"
+    environment:
+      <<: *kafka-env
+      KAFKA_NODE_ID: "1"
+      KAFKA_LISTENERS: "PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:29092"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka1:9092,EXTERNAL://localhost:29092"
+
+  kafka2:
+    <<: *kafka-common
+    container_name: kafka2
+    hostname: kafka2
+    ports:
+      - "39092:39092"
+    environment:
+      <<: *kafka-env
+      KAFKA_NODE_ID: "2"
+      KAFKA_LISTENERS: "PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:39092"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka2:9092,EXTERNAL://localhost:39092"
+
+  kafka3:
+    <<: *kafka-common
+    container_name: kafka3
+    hostname: kafka3
+    ports:
+      - "49092:49092"
+    environment:
+      <<: *kafka-env
+      KAFKA_NODE_ID: "3"
+      KAFKA_LISTENERS: "PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:49092"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka3:9092,EXTERNAL://localhost:49092"
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:v0.7.2
+    container_name: kafka-ui
+    restart: unless-stopped
+    mem_limit: 512m
+    depends_on: [kafka1, kafka2, kafka3]
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: "de9-kjh"
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: "kafka1:9092,kafka2:9092,kafka3:9092"
+      DYNAMIC_CONFIG_ENABLED: "true"
+      JAVA_OPTS: "-Xms128m -Xmx256m"
+
+  spark-master:
+    <<: *spark-common
+    container_name: spark-master
+    hostname: spark-master
+    command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.master.Master"]
+    mem_limit: 1536m                  # master 데몬 + (docker exec 로 띄우는) 스트리밍 driver
+    ports:
+      - "8081:8080"                   # Spark Master UI
+      - "4040:4040"                   # 실행 중인 애플리케이션(driver) UI
+
+  spark-worker:
+    <<: *spark-common
+    container_name: spark-worker
+    hostname: spark-worker
+    command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.worker.Worker", "spark://spark-master:7077"]
+    depends_on: [spark-master]
+    mem_limit: 2g
+    environment:
+      <<: *spark-env
+      SPARK_WORKER_CORES: "2"
+      SPARK_WORKER_MEMORY: "1536m"   # executor 에 줄 수 있는 메모리 1.5GiB
+
+  airflow:
+    build:
+      context: ../part2-price/airflow
+    image: de9-airflow:2.10.5
+    container_name: airflow
+    hostname: airflow
+    restart: unless-stopped
+    command: standalone
+    mem_limit: 2g
+    depends_on: [spark-master, kafka1]
+    ports:
+      - "8090:8080"                   # Airflow UI
+    environment:
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+      AIRFLOW__WEBSERVER__WORKERS: "2"
+      _AIRFLOW_DB_MIGRATE: "true"
+      _AIRFLOW_WWW_USER_CREATE: "true"
+      _AIRFLOW_WWW_USER_USERNAME: "admin"
+      _AIRFLOW_WWW_USER_PASSWORD: "${AIRFLOW_ADMIN_PASSWORD:-admin}"
+      AIRFLOW_CONN_SPARK_DEFAULT: "spark://spark-master:7077?deploy-mode=client"
+      KAFKA_BOOTSTRAP: "kafka1:9092,kafka2:9092,kafka3:9092"
+      AWS_REGION: "ap-northeast-2"
+      AWS_DEFAULT_REGION: "ap-northeast-2"
+    volumes:
+      - ../part2-price/dags:/opt/airflow/dags
+      - ../part2-price:/opt/work/part2-price
+      - ../data:/opt/work/data:ro

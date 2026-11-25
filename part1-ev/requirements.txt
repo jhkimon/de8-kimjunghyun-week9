@@ -1,0 +1,2 @@
+# Kafka 파이썬 클라이언트 (Producer/Consumer, EC2 호스트에서 실행)
+confluent-kafka==2.8.0

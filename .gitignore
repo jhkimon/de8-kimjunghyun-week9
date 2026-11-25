@@ -1,0 +1,24 @@
+# 비밀값·로컬 파일 (AWS 액세스 키는 어디에도 두지 않음 — EC2 IAM Role 사용)
+.env
+*.env
+.env.*
+*.pem
+.aws/
+credentials
+
+# 제출용 산출물 (레포에는 코드만)
+**/capture/
+git_log.txt
+*.zip
+
+# 파이썬·OS
+__pycache__/
+*.pyc
+.venv/
+venv/
+.DS_Store
+._*
+*.crc
+spark-warehouse/
+metastore_db/
+derby.log

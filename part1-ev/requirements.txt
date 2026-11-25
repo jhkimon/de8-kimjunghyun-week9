@@ -1,3 +1,5 @@
-# Kafka 파이썬 클라이언트 (Producer/Consumer, EC2 호스트 Python 3.10 에서 실행)
-# 2.16.2: Producer.close() 지원 (2.8.0 에는 없음)
+# Kafka 파이썬 클라이언트 (EC2 호스트 Python 3.10 에서 실행)
+# Part 1 (Q2·Q3): confluent-kafka — 2.16.2 부터 Producer.close() 지원
 confluent-kafka==2.16.2
+# Part 2 (Q6): kafka-python — kafka.partitioner.Partitioner 상속 커스텀 파티셔너
+kafka-python==3.0.13
